@@ -1,0 +1,29 @@
+on: [push, pull_request]
+name: CI
+jobs:
+  build:
+    name: "Build on Racket '${{ matrix.racket-version }}' (${{ matrix.racket-variant }})"
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        racket-version: ["stable", "current"]
+        racket-variant: ["BC", "CS"]
+        include:
+          - racket-version: current
+            experimental: true
+    steps:
+      - uses: actions/checkout@v2
+      - uses: Bogdanp/setup-racket@v1.7
+        with:
+          architecture: x64
+          distribution: full
+          variant: ${{ matrix.racket-variant }}
+          version: ${{ matrix.racket-version }}
+      - name: Installing cheap-8 and its dependencies
+        run: raco pkg install --no-docs --auto --name cheap-8
+      - name: Compiling cheap-8 and building its docs
+        run: raco setup --check-pkg-deps --unused-pkg-deps cheap-8
+      - name: Testing cheap-8
+        run: raco test -x -p cheap-8
