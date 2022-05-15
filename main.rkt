@@ -67,10 +67,10 @@
           #false))
 
   (define (chip-flag chip)
-    (bytes-ref (chip-registers chip) #xf))
+    (bytes-ref (chip-registers chip) #xF))
 
   (define (set-chip-flag! chip value)
-    (bytes-set! (chip-registers chip) #xf value))
+    (bytes-set! (chip-registers chip) #xF value))
 
   (define (reset a-chip)
     (struct-define chip a-chip)
@@ -99,7 +99,23 @@
         (loop (add1 (remainder tick cycles-before-sleep))))))
 
   (define (emulate-cycle a-chip)
-    (values)) ; TODO
+    (struct-define chip a-chip)
+    (define instruction (subbytes memory program-counter (add1 program-counter)))
+    (set! program-counter (bitwise-bit-field (+ 2 program-counter) 0 12))
+    (dispatch-instruction a-chip instruction))
+
+  (define (dispatch-instruction a-chip instruction)
+    (define (call name) (name chip instruction))
+    (case (bitwise-and #xF000 instruction)
+      [(#x0000) (case instruction
+                  [(#x00E0) (call op-cls)]
+                  [(#x00EE) (call op-ret)])]))
+
+  (define (op-cls a-chip instruction)
+    (displayln "hey I'm op cls!!"))
+
+  (define (op-ret a-chip instruction)
+    (displayln "hey I'm op ret!!"))
 
   ; main loop
 
@@ -111,5 +127,6 @@
   ; fiddling
 
   (define c (make-chip))
-  (run-cpu c)
+  ;(run-cpu c)
+  ;(dispatch-instruction c #x00EE)
   )
