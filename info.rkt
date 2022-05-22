@@ -1,7 +1,8 @@
 #lang info
 (define collection "cheap-8")
 (define deps '("base"
-               "struct-define"))
+               "struct-define"
+               "bitsyntax"))
 (define build-deps '("scribble-lib" "racket-doc" "rackunit-lib"))
 (define scribblings '(("scribblings/cheap-8.scrbl" ())))
 (define pkg-desc "Description Here")
