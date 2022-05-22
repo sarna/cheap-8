@@ -227,9 +227,40 @@
   (struct-define chip a-chip)
   (set! program-counter addr))
 
+(module+ test
+  (test-case "op-jp-imm"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "addr #x123"
+      (define instr (bytes #x11 #x23))
+      (dispatch-instruction c instr)
+      (check-true (= program-counter #x123)))
+
+    (test-case "addr #x94E"
+      (define instr (bytes #x19 #x4E))
+      (dispatch-instruction c instr)
+      (check-true (= program-counter #x94E)))))
+
 (define (op-jp-imm+reg a-chip addr)
   (struct-define chip a-chip)
   (set! program-counter (+ addr (bytes-ref registers 0))))
+
+(module+ test
+  (test-case "op-jp-imm+reg"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "addr #x73B, empty register 0"
+      (define instr (bytes #xB7 #x3B))
+      (dispatch-instruction c instr)
+      (check-true (= program-counter #x73B)))
+
+    (test-case "addr #x10F, #x8 in register 0"
+      (define instr (bytes #xB1 #x0F))
+      (bytes-set! registers 0 #x8)
+      (dispatch-instruction c instr)
+      (check-true (= program-counter (+ #x10F #x8))))))
 
 (module+ main
   ;; (Optional) main submodule. Put code here if you need it to be executed when
