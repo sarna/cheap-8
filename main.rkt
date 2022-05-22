@@ -89,56 +89,6 @@
   (set! program-counter (bitwise-bit-field (+ 2 program-counter) 0 12))
   (dispatch-instruction a-chip instruction))
 
-;; (define (dispatch-instruction a-chip instruction)
-;;   (define (call name) (name chip instruction))
-;;   (case (bitwise-and #xF000 instruction)
-;;     [(#x0000)
-;;      (case instruction
-;;        [(#x00E0) (call op-cls)]
-;;        [(#x00EE) (call op-ret)])]
-;;     [(#x1000) (call op-jp-imm)]
-;;     [(#x2000) (call op-call)]
-;;     [(#x3000) (call op-se-reg-imm)]
-;;     [(#x4000) (call op-sne-reg-imm)]
-;;     [(#x5000)
-;;      (case (bitwise-and #x000F instruction)
-;;        [(#x0) (call op-se-reg-reg)])]
-;;     [(#x6000) (call op-ld-reg<imm)]
-;;     [(#x7000) (call op-add-reg<imm)]
-;;     [(#x8000)
-;;      (case (bitwise-and #x000F instruction)
-;;        [(#x0) (call op-ld-reg<reg)]
-;;        [(#x1) (call op-or)]
-;;        [(#x2) (call op-and)]
-;;        [(#x3) (call op-xor)]
-;;        [(#x4) (call op-add-reg<reg)]
-;;        [(#x5) (call op-sub-reg<reg)]
-;;        [(#x6) (call op-shr)]
-;;        [(#x7) (call op-subn-reg<reg)]
-;;        [(#xE) (call op-shl)])]
-;;     [(#x9000)
-;;      (case (bitwise-and #x000F instruction)
-;;        [(#x0) (call op-sne-reg-reg)])]
-;;     [(#xA000) (call op-ld-i<imm)]
-;;     [(#xB000) (call op-jp-imm+reg)]
-;;     [(#xC000) (call op-rand)]
-;;     [(#xD000) (call op-draw)]
-;;     [(#xE000)
-;;      (case (bitwise-and #x00FF instruction)
-;;        [(#x9E) (call op-skp)]
-;;        [(#xA1) (call op-sknp)])]
-;;     [(#xF000)
-;;      (case (bitwise-and #x00FF instruction)
-;;        [(#x07) (call op-ld-reg<dt)]
-;;        [(#x0A) (call op-ld-reg<key)]
-;;        [(#x15) (call op-ld-dt<reg)]
-;;        [(#x18) (call op-ld-st<reg)]
-;;        [(#x1E) (call op-add-index<reg)]
-;;        [(#x29) (call op-ld-font<vx)]
-;;        [(#x33) (call op-ld-bcd<vx)]
-;;        [(#x55) (call op-ld-mem<regs)]
-;;        [(#x65) (call op-ld-regs<mem)])]))
-
 (define (dispatch-instruction a-chip instruction)
   (define (call name) (name chip instruction))
   (bit-string-case instruction
