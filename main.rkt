@@ -47,7 +47,7 @@
         (make-bytes 16)
         0
         #x200
-        (vector (make-bytes 16) 0)
+        (stack (make-vector 16) 0)
         (make-bytes memory-size)
         #false))
 
@@ -56,6 +56,20 @@
 
 (define (set-chip-flag! chip value)
   (bytes-set! (chip-registers chip) #xF value))
+
+(struct stack
+  (contents
+   [fill-ptr #:mutable]))
+
+(define (stack-push! a-stack value)
+  (struct-define stack a-stack)
+  (vector-set! contents fill-ptr value)
+  (set! fill-ptr (add1 fill-ptr)))
+
+(define (stack-pop! a-stack)
+  (struct-define stack a-stack)
+  (set! fill-ptr (sub1 fill-ptr))
+  (vector-ref contents fill-ptr))
 
 (define (reset a-chip)
   (struct-define chip a-chip)
@@ -98,8 +112,8 @@
        [(#x00EE) (call 'op-ret)]))
     ([(= #x1 :: bits 4) (addr :: bits 12)]
      (op-jp-imm a-chip addr))
-    ([(= #x2 :: bits 4) (_ :: binary)]
-     (call 'op-call))
+    ([(= #x2 :: bits 4) (addr :: bits 12)]
+     (op-call a-chip addr))
     ([(= #x3 :: bits 4) (_ :: binary)]
      (call 'op-se-reg-imm))
     ([(= #x4 :: bits 4) (_ :: binary)]
@@ -191,6 +205,30 @@
       (define instr (bytes #x19 #x4E))
       (dispatch-instruction c instr)
       (check-true (= program-counter #x94E)))))
+
+(define (op-call a-chip addr)
+  (struct-define chip a-chip)
+  (stack-push! stack program-counter)
+  (set! program-counter addr))
+
+(module+ test
+  (test-case "op-call"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "addr #x139, stack with 0 elements"
+      (define instr (bytes #x21 #x39))
+      (define old-program-counter program-counter)
+      (dispatch-instruction c instr)
+      (check-eq? old-program-counter (vector-ref (stack-contents stack) 0))
+      (check-eq? program-counter #x139))
+
+    (test-case "addr #xAAE, stack with 1 element"
+      (define instr (bytes #x2A #xAE))
+      (define old-program-counter program-counter)
+      (dispatch-instruction c instr)
+      (check-eq? old-program-counter (vector-ref (stack-contents stack) 1))
+      (check-eq? program-counter #xAAE))))
 
 (define (op-jp-imm+reg a-chip addr)
   (struct-define chip a-chip)
