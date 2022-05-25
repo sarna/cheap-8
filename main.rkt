@@ -106,10 +106,10 @@
 (define (dispatch-instruction a-chip instruction)
   (define (call name) (name chip instruction))
   (bit-string-case instruction
-    ([(= #x0 :: bits 4) (_ :: binary)]
-     (case instruction
-       [(#x00E0) (call 'op-cls)]
-       [(#x00EE) (call 'op-ret)]))
+    ([(= #x00E0 :: bytes 2)]
+     (call 'op-cls))
+    ([(= #x00EE :: bytes 2)]
+     (op-ret a-chip))
     ([(= #x1 :: bits 4) (addr :: bits 12)]
      (op-jp-imm a-chip addr))
     ([(= #x2 :: bits 4) (addr :: bits 12)]
@@ -125,14 +125,16 @@
      (call 'op-ld-reg<imm))
     ([(= #x7 :: bits 4) (_ :: binary)]
      (call 'op-add-reg<imm))
+    ([(= #x8 :: bits 4) (x :: bits 4) (y :: bits 4) (= #x4 :: bits 4)]
+     (op-add-reg<reg a-chip x y))
+    ([(= #x8 :: bits 4) (x :: bits 4) (y :: bits 4) (= #x5 :: bits 4)]
+     (op-sub-reg<reg a-chip x y))
     ([(= #x8 :: bits 4) (_ :: binary)]
      (case (bitwise-and #x000F instruction)
        [(#x0) (call 'op-ld-reg<reg)]
        [(#x1) (call 'op-or)]
        [(#x2) (call 'op-and)]
        [(#x3) (call 'op-xor)]
-       [(#x4) (call 'op-add-reg<reg)]
-       [(#x5) (call 'op-sub-reg<reg)]
        [(#x6) (call 'op-shr)]
        [(#x7) (call 'op-subn-reg<reg)]
        [(#xE) (call 'op-shl)]))
@@ -151,6 +153,8 @@
      (case (bitwise-and #x00FF instruction)
        [(#x9E) (call 'op-skp)]
        [(#xA1) (call 'op-sknp)]))
+    ([(= #xF :: bits 4) (register :: bits 4) (= #x33 :: bytes 1)]
+     (op-ld-bcd<vx a-chip register))
     ([(= #xF :: bits 4) (_ :: binary)]
      (case (bitwise-and #x00FF instruction)
        [(#x07) (call 'op-ld-reg<dt)]
@@ -159,9 +163,25 @@
        [(#x18) (call 'op-ld-st<reg)]
        [(#x1E) (call 'op-add-index<reg)]
        [(#x29) (call 'op-ld-font<vx)]
-       [(#x33) (call 'op-ld-bcd<vx)]
        [(#x55) (call 'op-ld-mem<regs)]
        [(#x65) (call 'op-ld-regs<mem)]))))
+
+(define (op-ret a-chip)
+  (struct-define chip a-chip)
+  (set! program-counter (stack-pop! stack)))
+
+(module+ test
+  (test-case "op-ret"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "call at #x394 and return"
+      (define call-instr (bytes #x23 #x94))
+      (define ret-instr (bytes #x00 #xEE))
+      (define old-program-counter program-counter)
+      (dispatch-instruction c call-instr)
+      (dispatch-instruction c ret-instr)
+      (check-eq? program-counter old-program-counter))))
 
 (define (op-rand a-chip register mask)
   (struct-define chip a-chip)
@@ -230,6 +250,86 @@
       (check-eq? old-program-counter (vector-ref (stack-contents stack) 1))
       (check-eq? program-counter #xAAE))))
 
+(define (+_8 x y)
+  (define result (+ x y))
+  (values
+   (bitwise-bit-field result 0 8) ; result
+   (if (> result 255) 1 0)))      ; carry
+
+(define (op-add-reg<reg a-chip x y)
+  (struct-define chip a-chip)
+  (define first (bytes-ref registers x))
+  (define second (bytes-ref registers y))
+  (define-values (result carry) (+_8 first second))
+  (bytes-set! registers x result)
+  (set-chip-flag! a-chip carry))
+
+(module+ test
+  (test-case "op-add-reg<reg"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "reg #x2 and #xB"
+      (define instr (bytes #x82 #xB4))
+      (define x #x5)
+      (define y #x9)
+      (bytes-set! registers #x2 x)
+      (bytes-set! registers #xB y)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref registers #x2) (+ x y))
+      (check-eq? (chip-flag c) #x0))
+
+    (test-case "reg #x1 and #x4, overflow"
+      (define instr (bytes #x81 #x44))
+      (define x #xFA)
+      (define y #xBA)
+      (bytes-set! registers #x1 x)
+      (bytes-set! registers #x4 y)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref registers #x1)
+                 ((+ x y) . - . #x100)) ; substract 256 to account for overflow
+      (check-eq? (chip-flag c) #x1))))
+
+(define (-_8 x y)
+  (define result (- x y))
+  (values
+   (bitwise-bit-field result 0 8) ; result
+   (if (> x y) 1 0)))             ; NOT borrow
+
+(define (op-sub-reg<reg a-chip x y)
+  (struct-define chip a-chip)
+  (define first (bytes-ref registers x))
+  (define second (bytes-ref registers y))
+  (define-values (result not-borrow) (-_8 first second))
+  (bytes-set! registers x result)
+  (set-chip-flag! a-chip not-borrow))
+
+(module+ test
+  (test-case "op-sub-reg<reg"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "reg #x8 and #xA"
+      (define instr (bytes #x88 #xA5))
+      (define x #x15)
+      (define y #x7)
+      (bytes-set! registers #x8 x)
+      (bytes-set! registers #xA y)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref registers #x8) (- x y))
+      (check-eq? (chip-flag c) #x1))
+
+    (test-case "reg #xB and #x1, underflow"
+      (define instr (bytes #x8B #x15))
+      (define x #x3)
+      (define y #xBA)
+      (bytes-set! registers #xB x)
+      (bytes-set! registers #x1 y)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref registers #xB)
+                 ((- x y) . + . #x100)) ; add 256 to account for underflow
+      (check-eq? (chip-flag c) #x0))))
+
 (define (op-jp-imm+reg a-chip addr)
   (struct-define chip a-chip)
   (set! program-counter (+ addr (bytes-ref registers 0))))
@@ -246,9 +346,48 @@
 
     (test-case "addr #x10F, #x8 in register 0"
       (define instr (bytes #xB1 #x0F))
-      (bytes-set! registers 0 #x8)
+      (bytes-set! registers #x0 #x8)
       (dispatch-instruction c instr)
       (check-true (= program-counter (+ #x10F #x8))))))
+
+
+(define (op-ld-bcd<vx a-chip register)
+  (struct-define chip a-chip)
+
+  (define (integer->digits integer)
+    (define third  (modulo (floor (/ integer 1))   10))
+    (define second (modulo (floor (/ integer 10))  10))
+    (define first  (modulo (floor (/ integer 100)) 10))
+    (values first second third))
+
+  (define number (bytes-ref registers register))
+  (define-values (first second third) (integer->digits number))
+  (bytes-set! memory (+ index 0) first)
+  (bytes-set! memory (+ index 1) second)
+  (bytes-set! memory (+ index 2) third))
+
+(module+ test
+  (test-case "op-ld-bcd<vx"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "123 in register #x3"
+      (define instr (bytes #xF3 #x33))
+      (set! index (+ program-counter 39)) ; we shouldn't override sprites, right?
+      (bytes-set! registers #x3 123)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref memory (+ index 0)) 1)
+      (check-eq? (bytes-ref memory (+ index 1)) 2)
+      (check-eq? (bytes-ref memory (+ index 2)) 3))
+
+    (test-case "#x8 in register 1"
+      (define instr (bytes #xF1 #x33))
+      (set! index (+ program-counter 2)) ; we shouldn't override sprites, right?
+      (bytes-set! registers #x1 #x8)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref memory (+ index 0)) 0)
+      (check-eq? (bytes-ref memory (+ index 1)) 0)
+      (check-eq? (bytes-ref memory (+ index 2)) 8))))
 
 (module+ main
   ;; (Optional) main submodule. Put code here if you need it to be executed when
