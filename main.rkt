@@ -123,12 +123,14 @@
        [(#x0) (call 'op-se-reg-reg)]))
     ([(= #x6 :: bits 4) (_ :: binary)]
      (call 'op-ld-reg<imm))
-    ([(= #x7 :: bits 4) (_ :: binary)]
-     (call 'op-add-reg<imm))
+    ([(= #x7 :: bits 4) (register :: bits 4) (value :: bytes 1)]
+     (op-add-reg<imm a-chip register value))
     ([(= #x8 :: bits 4) (x :: bits 4) (y :: bits 4) (= #x4 :: bits 4)]
      (op-add-reg<reg a-chip x y))
     ([(= #x8 :: bits 4) (x :: bits 4) (y :: bits 4) (= #x5 :: bits 4)]
      (op-sub-reg<reg a-chip x y))
+    ([(= #x8 :: bits 4) (x :: bits 4) (y :: bits 4) (= #x7 :: bits 4)]
+     (op-subn-reg<reg a-chip x y))
     ([(= #x8 :: bits 4) (_ :: binary)]
      (case (bitwise-and #x000F instruction)
        [(#x0) (call 'op-ld-reg<reg)]
@@ -136,7 +138,6 @@
        [(#x2) (call 'op-and)]
        [(#x3) (call 'op-xor)]
        [(#x6) (call 'op-shr)]
-       [(#x7) (call 'op-subn-reg<reg)]
        [(#xE) (call 'op-shl)]))
     ([(= #x9 :: bits 4) (_ :: binary)]
      (case (bitwise-and #x000F instruction)
@@ -155,13 +156,14 @@
        [(#xA1) (call 'op-sknp)]))
     ([(= #xF :: bits 4) (register :: bits 4) (= #x33 :: bytes 1)]
      (op-ld-bcd<vx a-chip register))
+    ([(= #xF :: bits 4) (register :: bits 4) (= #x1E :: bytes 1)]
+     (op-add-index<reg a-chip register))
     ([(= #xF :: bits 4) (_ :: binary)]
      (case (bitwise-and #x00FF instruction)
        [(#x07) (call 'op-ld-reg<dt)]
        [(#x0A) (call 'op-ld-reg<key)]
        [(#x15) (call 'op-ld-dt<reg)]
        [(#x18) (call 'op-ld-st<reg)]
-       [(#x1E) (call 'op-add-index<reg)]
        [(#x29) (call 'op-ld-font<vx)]
        [(#x55) (call 'op-ld-mem<regs)]
        [(#x65) (call 'op-ld-regs<mem)]))))
@@ -256,6 +258,39 @@
    (bitwise-bit-field result 0 8) ; result
    (if (> result 255) 1 0)))      ; carry
 
+(define (op-add-reg<imm a-chip register value)
+  (struct-define chip a-chip)
+  (define register-value (bytes-ref registers register))
+  ;; for some weird reason the ADD immediate op doesn't set the flag
+  (define-values (result _ignore) (+_8 register-value value))
+  (bytes-set! registers register result))
+
+(module+ test
+  (test-case "op-add-reg<imm"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "reg #x8 and value #x14"
+      (define instr (bytes #x78 #x14))
+      (define x #x93)
+      (define y #x14)
+      (define previous-flag-value (chip-flag c))
+      (bytes-set! registers #x8 x)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref registers #x8) (+ x y))
+      (check-eq? (chip-flag c) previous-flag-value))
+
+    (test-case "reg #x3 and overflow"
+      (define instr (bytes #x73 #xFF))
+      (define x #xF3)
+      (define y #xFF)
+      (define previous-flag-value (chip-flag c))
+      (bytes-set! registers #x3 x)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref registers #x3)
+                 ((+ x y) . - . #x100)) ; substract 256 to account for overflow
+      (check-eq? (chip-flag c) previous-flag-value))))
+
 (define (op-add-reg<reg a-chip x y)
   (struct-define chip a-chip)
   (define first (bytes-ref registers x))
@@ -330,6 +365,42 @@
                  ((- x y) . + . #x100)) ; add 256 to account for underflow
       (check-eq? (chip-flag c) #x0))))
 
+(define (op-subn-reg<reg a-chip x y)
+  (struct-define chip a-chip)
+  (define first (bytes-ref registers x))
+  (define second (bytes-ref registers y))
+  (define-values (result not-borrow) (-_8 second first))
+  (bytes-set! registers x result)
+  (set-chip-flag! a-chip not-borrow))
+
+
+(module+ test
+  (test-case "op-subn-reg<reg"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "reg #x8 and #xA, underflow"
+      (define instr (bytes #x88 #xA7))
+      (define x #x15)
+      (define y #x7)
+      (bytes-set! registers #x8 x)
+      (bytes-set! registers #xA y)
+      (dispatch-instruction c instr)
+      (check-eq?
+       (bytes-ref registers #x8)
+       ((- y x) . + . #x100)) ; add 256 to account for underflow
+      (check-eq? (chip-flag c) #x0))
+
+    (test-case "reg #xB and #x1"
+      (define instr (bytes #x8B #x17))
+      (define x #x3)
+      (define y #xBA)
+      (bytes-set! registers #xB x)
+      (bytes-set! registers #x1 y)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref registers #xB) (- y x))
+      (check-eq? (chip-flag c) #x1))))
+
 (define (op-jp-imm+reg a-chip addr)
   (struct-define chip a-chip)
   (set! program-counter (+ addr (bytes-ref registers 0))))
@@ -352,7 +423,6 @@
 
 
 (define (op-ld-bcd<vx a-chip register)
-  (struct-define chip a-chip)
 
   (define (integer->digits integer)
     (define third  (modulo (floor (/ integer 1))   10))
@@ -360,6 +430,7 @@
     (define first  (modulo (floor (/ integer 100)) 10))
     (values first second third))
 
+  (struct-define chip a-chip)
   (define number (bytes-ref registers register))
   (define-values (first second third) (integer->digits number))
   (bytes-set! memory (+ index 0) first)
@@ -388,6 +459,10 @@
       (check-eq? (bytes-ref memory (+ index 0)) 0)
       (check-eq? (bytes-ref memory (+ index 1)) 0)
       (check-eq? (bytes-ref memory (+ index 2)) 8))))
+
+(define (op-add-index<reg a-chip register)
+  (struct-define chip a-chip)
+  '(TODO))
 
 (module+ main
   ;; (Optional) main submodule. Put code here if you need it to be executed when
