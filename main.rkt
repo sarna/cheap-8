@@ -454,7 +454,7 @@
 
     (test-case "123 in register #x3"
       (define instr (bytes #xF3 #x33))
-      (set! index (+ program-counter 39)) ; we shouldn't override sprites, right?
+      (set! index (+ program-counter 39))
       (bytes-set! registers #x3 123)
       (dispatch-instruction c instr)
       (check-eq? (bytes-ref memory (+ index 0)) 1)
@@ -463,7 +463,7 @@
 
     (test-case "#x8 in register 1"
       (define instr (bytes #xF1 #x33))
-      (set! index (+ program-counter 2)) ; we shouldn't override sprites, right?
+      (set! index (+ program-counter 2))
       (bytes-set! registers #x1 #x8)
       (dispatch-instruction c instr)
       (check-eq? (bytes-ref memory (+ index 0)) 0)
@@ -472,7 +472,27 @@
 
 
 (define-instruction (op-add-index<reg register)
-  '(TODO))
+  (define value (+ index (bytes-ref registers register)))
+  (set! index (bitwise-bit-field value 0 16)))
+
+(module+ test
+  (test-case "op-add-index<reg"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "#x42 in register #x7, index was #x10"
+      (define instr (bytes #xF7 #x1E))
+      (set! index #x10)
+      (bytes-set! registers #x7 #x42)
+      (dispatch-instruction c instr)
+      (check-eq? index (+ #x42 #x10)))
+
+    (test-case "#x3 in register #x4, index was #xffff"
+      (define instr (bytes #xF4 #x1E))
+      (set! index #xffff)
+      (bytes-set! registers #x4 #x3)
+      (dispatch-instruction c instr)
+      (check-eq? index #x2))))          ; should overflow
 
 (module+ main
   ;; (Optional) main submodule. Put code here if you need it to be executed when
