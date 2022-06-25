@@ -27,7 +27,9 @@
 
 (require racket/port
          struct-define
-         bitsyntax)
+         bitsyntax
+         syntax/parse/define
+         (for-syntax racket/base))
 
 ; cpu
 
@@ -42,14 +44,15 @@
    memory
    [loaded-rom #:mutable]))
 
-(define (make-chip)
-  (chip #true
-        (make-bytes 16)
-        0
-        #x200
-        (stack (make-vector 16) 0)
-        (make-bytes memory-size)
-        #false))
+(define (make-chip
+         #:running         [running         #true]
+         #:registers       [registers       (make-bytes 16)]
+         #:index           [index           0]
+         #:program-counter [program-counter #x200]
+         #:stack           [stack           (stack (make-vector 16) 0)]
+         #:memory          [memory          (make-bytes memory-size)]
+         #:loaded-rom      [loaded-rom      #false])
+  (chip running registers index program-counter stack memory loaded-rom))
 
 (define (chip-flag chip)
   (bytes-ref (chip-registers chip) #xF))
@@ -168,8 +171,15 @@
        [(#x55) (call 'op-ld-mem<regs)]
        [(#x65) (call 'op-ld-regs<mem)]))))
 
-(define (op-ret a-chip)
-  (struct-define chip a-chip)
+
+(define-syntax-parse-rule (define-instruction (name args ...) body ...)
+  #:with chip-instance (datum->syntax this-syntax 'chip-instance)
+  (define (name chip-instance args ...)
+    (struct-define chip chip-instance)
+    body ...))
+
+
+(define-instruction (op-ret)
   (set! program-counter (stack-pop! stack)))
 
 (module+ test
@@ -185,8 +195,8 @@
       (dispatch-instruction c ret-instr)
       (check-eq? program-counter old-program-counter))))
 
-(define (op-rand a-chip register mask)
-  (struct-define chip a-chip)
+
+(define-instruction (op-rand register mask)
   (bytes-set! registers register (bitwise-and (random 256) mask)))
 
 (module+ test
@@ -209,8 +219,8 @@
       (dispatch-instruction c instr)
       (check-eq? (bytes-ref registers #x5) #x0))))
 
-(define (op-jp-imm a-chip addr)
-  (struct-define chip a-chip)
+
+(define-instruction (op-jp-imm addr)
   (set! program-counter addr))
 
 (module+ test
@@ -228,8 +238,8 @@
       (dispatch-instruction c instr)
       (check-true (= program-counter #x94E)))))
 
-(define (op-call a-chip addr)
-  (struct-define chip a-chip)
+
+(define-instruction (op-call addr)
   (stack-push! stack program-counter)
   (set! program-counter addr))
 
@@ -252,14 +262,15 @@
       (check-eq? old-program-counter (vector-ref (stack-contents stack) 1))
       (check-eq? program-counter #xAAE))))
 
+
 (define (+_8 x y)
   (define result (+ x y))
   (values
    (bitwise-bit-field result 0 8) ; result
    (if (> result 255) 1 0)))      ; carry
 
-(define (op-add-reg<imm a-chip register value)
-  (struct-define chip a-chip)
+
+(define-instruction (op-add-reg<imm register value)
   (define register-value (bytes-ref registers register))
   ;; for some weird reason the ADD immediate op doesn't set the flag
   (define-values (result _ignore) (+_8 register-value value))
@@ -291,13 +302,13 @@
                  ((+ x y) . - . #x100)) ; substract 256 to account for overflow
       (check-eq? (chip-flag c) previous-flag-value))))
 
-(define (op-add-reg<reg a-chip x y)
-  (struct-define chip a-chip)
+
+(define-instruction (op-add-reg<reg x y)
   (define first (bytes-ref registers x))
   (define second (bytes-ref registers y))
   (define-values (result carry) (+_8 first second))
   (bytes-set! registers x result)
-  (set-chip-flag! a-chip carry))
+  (set-chip-flag! chip-instance carry))
 
 (module+ test
   (test-case "op-add-reg<reg"
@@ -325,19 +336,20 @@
                  ((+ x y) . - . #x100)) ; substract 256 to account for overflow
       (check-eq? (chip-flag c) #x1))))
 
+
 (define (-_8 x y)
   (define result (- x y))
   (values
    (bitwise-bit-field result 0 8) ; result
    (if (> x y) 1 0)))             ; NOT borrow
 
-(define (op-sub-reg<reg a-chip x y)
-  (struct-define chip a-chip)
+
+(define-instruction (op-sub-reg<reg x y)
   (define first (bytes-ref registers x))
   (define second (bytes-ref registers y))
   (define-values (result not-borrow) (-_8 first second))
   (bytes-set! registers x result)
-  (set-chip-flag! a-chip not-borrow))
+  (set-chip-flag! chip-instance not-borrow))
 
 (module+ test
   (test-case "op-sub-reg<reg"
@@ -365,14 +377,13 @@
                  ((- x y) . + . #x100)) ; add 256 to account for underflow
       (check-eq? (chip-flag c) #x0))))
 
-(define (op-subn-reg<reg a-chip x y)
-  (struct-define chip a-chip)
+
+(define-instruction (op-subn-reg<reg x y)
   (define first (bytes-ref registers x))
   (define second (bytes-ref registers y))
   (define-values (result not-borrow) (-_8 second first))
   (bytes-set! registers x result)
-  (set-chip-flag! a-chip not-borrow))
-
+  (set-chip-flag! chip-instance not-borrow))
 
 (module+ test
   (test-case "op-subn-reg<reg"
@@ -401,8 +412,8 @@
       (check-eq? (bytes-ref registers #xB) (- y x))
       (check-eq? (chip-flag c) #x1))))
 
-(define (op-jp-imm+reg a-chip addr)
-  (struct-define chip a-chip)
+
+(define-instruction (op-jp-imm+reg addr)
   (set! program-counter (+ addr (bytes-ref registers 0))))
 
 (module+ test
@@ -422,7 +433,7 @@
       (check-true (= program-counter (+ #x10F #x8))))))
 
 
-(define (op-ld-bcd<vx a-chip register)
+(define-instruction (op-ld-bcd<vx register)
 
   (define (integer->digits integer)
     (define third  (modulo (floor (/ integer 1))   10))
@@ -430,7 +441,6 @@
     (define first  (modulo (floor (/ integer 100)) 10))
     (values first second third))
 
-  (struct-define chip a-chip)
   (define number (bytes-ref registers register))
   (define-values (first second third) (integer->digits number))
   (bytes-set! memory (+ index 0) first)
@@ -460,8 +470,8 @@
       (check-eq? (bytes-ref memory (+ index 1)) 0)
       (check-eq? (bytes-ref memory (+ index 2)) 8))))
 
-(define (op-add-index<reg a-chip register)
-  (struct-define chip a-chip)
+
+(define-instruction (op-add-index<reg register)
   '(TODO))
 
 (module+ main
