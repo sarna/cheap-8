@@ -134,14 +134,16 @@
      (op-sub-reg<reg a-chip x y))
     ([(= #x8 :: bits 4) (x :: bits 4) (y :: bits 4) (= #x7 :: bits 4)]
      (op-subn-reg<reg a-chip x y))
+    ([(= #x8 :: bits 4) (x :: bits 4) (y :: bits 4) (= #x6 :: bits 4)]
+     (op-shr a-chip x y))
+    ([(= #x8 :: bits 4) (x :: bits 4) (y :: bits 4) (= #xE :: bits 4)]
+     (op-shl a-chip x y))
     ([(= #x8 :: bits 4) (_ :: binary)]
      (case (bitwise-and #x000F instruction)
        [(#x0) (call 'op-ld-reg<reg)]
        [(#x1) (call 'op-or)]
        [(#x2) (call 'op-and)]
-       [(#x3) (call 'op-xor)]
-       [(#x6) (call 'op-shr)]
-       [(#xE) (call 'op-shl)]))
+       [(#x3) (call 'op-xor)]))
     ([(= #x9 :: bits 4) (_ :: binary)]
      (case (bitwise-and #x000F instruction)
        [(#x0) (call 'op-sne-reg-reg)]))
@@ -411,6 +413,45 @@
       (dispatch-instruction c instr)
       (check-eq? (bytes-ref registers #xB) (- y x))
       (check-eq? (chip-flag c) #x1))))
+
+
+(define-instruction (op-shr x y)
+  (define value (bytes-ref registers x))
+  (bytes-set! registers y (arithmetic-shift value -1))
+  (set-chip-flag! chip-instance (bitwise-bit-field value 0 1)))
+
+(module+ test
+  (test-case "op-shr"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "op-shr: #x12 in register #x2 and #x3c in register #x9"
+      (define instr (bytes #x82 #x96))
+      (bytes-set! registers #x2 #x12)
+      (bytes-set! registers #x9 #x3c)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref registers #x9) (arithmetic-shift #x12 -1))
+      (check-eq? (chip-flag c) (bitwise-bit-field #x12 0 1)))))
+
+
+(define-instruction (op-shl x y)
+  (define value (bytes-ref registers x))
+  (bytes-set! registers y (arithmetic-shift value 1))
+  (set-chip-flag! chip-instance (bitwise-bit-field value 7 8)))
+
+
+(module+ test
+  (test-case "op-shl"
+    (define c (make-chip))
+    (struct-define chip c)
+
+    (test-case "op-shl: #x12 in register #x2 and #x3c in register #x9"
+      (define instr (bytes #x82 #x9E))
+      (bytes-set! registers #x2 #x12)
+      (bytes-set! registers #x9 #x3c)
+      (dispatch-instruction c instr)
+      (check-eq? (bytes-ref registers #x9) (arithmetic-shift #x12 1))
+      (check-eq? (chip-flag c) (bitwise-bit-field #x12 7 8)))))
 
 
 (define-instruction (op-jp-imm+reg addr)
